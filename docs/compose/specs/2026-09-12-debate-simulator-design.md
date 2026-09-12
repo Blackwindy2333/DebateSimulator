@@ -1,5 +1,10 @@
 # AI 辩论模拟器（DebateSimulator）设计文档
 
+> [!NOTE]
+> This document may not reflect the current implementation.
+> See the final report for up-to-date state:
+> [Final Report](../reports/debate-simulator.md)
+
 **日期：** 2026-09-12
 **状态：** 已批准
 
