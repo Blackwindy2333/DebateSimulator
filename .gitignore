@@ -6,3 +6,5 @@ venv/
 cache/
 Results/
 config/config.json
+.playwright-cli/
+output/
