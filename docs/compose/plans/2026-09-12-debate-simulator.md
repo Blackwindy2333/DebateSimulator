@@ -1,5 +1,10 @@
 # AI 辩论模拟器 Implementation Plan
 
+> [!NOTE]
+> This document may not reflect the current implementation.
+> See the final report for up-to-date state:
+> [Final Report](../reports/debate-simulator.md)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use compose:subagent (recommended) or compose:execute to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 构建一个本地 Web 应用，让两个 OpenAI 兼容 API 扮演正反方进行结构化辩论，第三个 API 评价胜负，全过程实时显示并持久化。
