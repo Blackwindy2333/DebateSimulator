@@ -1,3 +1,5 @@
+import json
+
 from fastapi.testclient import TestClient
 
 from app import config_store, storage
@@ -8,6 +10,16 @@ def _patch(tmp_path, monkeypatch):
     monkeypatch.setattr(config_store, "CONFIG_PATH", tmp_path / "config.json")
     monkeypatch.setattr(storage, "CACHE_PATH", tmp_path / "cache" / "session.json")
     monkeypatch.setattr(storage, "RESULTS_DIR", tmp_path / "Results")
+
+
+def test_startup_clears_stale_cache(tmp_path, monkeypatch):
+    _patch(tmp_path, monkeypatch)
+    storage.CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    storage.CACHE_PATH.write_text('{"topic": "上一场的旧缓存", "messages": [{"id": "m1"}]}', "utf-8")
+    with TestClient(create_app()):
+        pass
+    cleared = json.loads(storage.CACHE_PATH.read_text("utf-8"))
+    assert cleared["topic"] == "" and cleared["messages"] == []
 
 
 def test_config_endpoints(tmp_path, monkeypatch):
