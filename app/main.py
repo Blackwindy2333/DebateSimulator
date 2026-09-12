@@ -1,5 +1,6 @@
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Body, FastAPI
@@ -13,6 +14,14 @@ from app.llm import stream_chat
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 SETTINGS_KEYS = ("pro", "con", "judge")
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    # 启动时清空可能残留的辩论缓存
+    storage.init_session()
+    yield
+
 
 
 def _mask(key):
@@ -35,7 +44,7 @@ def _sse(event, data):
 
 
 def create_app():
-    app = FastAPI(title="DebateSimulator")
+    app = FastAPI(title="DebateSimulator", lifespan=lifespan)
     bus = EventBus()
     state = {"runner": None, "task": None}
 
