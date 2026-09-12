@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 辩论赛 · DebateSimulator</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23E0A33E'/%3E%3Ctext x='16' y='23' font-size='20' text-anchor='middle' font-family='serif' fill='%230B0E13'%3E辩%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+<header class="strip">
+  <div class="brand">
+    <span class="brand-mark">辩</span>
+    <div class="brand-text">
+      <h1>AI 辩论赛</h1>
+      <p class="brand-sub" id="topic-line">尚未设置辩题</p>
+    </div>
+  </div>
+
+  <div class="sides">
+    <span class="side-tag pro"><i class="dot"></i><b id="pro-name">正方</b></span>
+    <span class="vs">对</span>
+    <span class="side-tag con"><i class="dot"></i><b id="con-name">反方</b></span>
+  </div>
+
+  <div class="strip-actions">
+    <span class="pill" id="status-pill" data-status="IDLE">待开始</span>
+    <button class="ghost" id="btn-theme" aria-label="切换深浅主题">◐</button>
+    <button class="ghost" id="btn-history">历史</button>
+    <button class="ghost" id="btn-settings">设置</button>
+  </div>
+</header>
+
+<section class="banner" id="warning" hidden>
+  <div class="banner-body">
+    <h2>选题未通过合理性校验</h2>
+    <p id="warning-reason"></p>
+    <div class="banner-actions">
+      <button class="danger" id="btn-force">强行开始</button>
+      <button class="ghost" id="btn-edit-topic">返回修改辩题</button>
+    </div>
+  </div>
+</section>
+
+<section class="banner banner-error" id="error-banner" hidden>
+  <div class="banner-body">
+    <h2>接口调用失败</h2>
+    <p id="error-message"></p>
+    <div class="banner-actions">
+      <button class="primary" id="btn-retry">重试本次发言</button>
+      <button class="ghost" id="btn-skip">跳过本次发言</button>
+      <button class="ghost" id="btn-abort-err">中止辩论</button>
+    </div>
+  </div>
+</section>
+
+<main class="arena">
+  <section class="column" id="col-pro" data-side="pro" aria-label="正方发言">
+    <h2 class="col-head"><i class="dot"></i><span id="col-pro-name">正方</span></h2>
+    <div class="stream" id="stream-pro"></div>
+  </section>
+
+  <aside class="rail" aria-label="赛程进度">
+    <div class="rail-stage" id="rail-stage">待开始</div>
+    <div class="rail-track"><div class="rail-fill" id="rail-fill"></div></div>
+    <div class="rail-meta" id="rail-meta">共 – 轮</div>
+  </aside>
+
+  <section class="column" id="col-con" data-side="con" aria-label="反方发言">
+    <h2 class="col-head"><i class="dot"></i><span id="col-con-name">反方</span></h2>
+    <div class="stream" id="stream-con"></div>
+  </section>
+</main>
+
+<section class="verdict" id="verdict" hidden aria-label="评委点评">
+  <h2 class="verdict-head">评委点评</h2>
+  <div class="verdict-body" id="verdict-body"></div>
+</section>
+
+<footer class="controls">
+  <button class="primary" id="btn-start">开始辩论</button>
+  <button class="ghost" id="btn-pause" disabled>暂停</button>
+  <button class="ghost" id="btn-abort" disabled>中止</button>
+  <span class="hint" id="hint"></span>
+</footer>
+
+<div class="scrim" id="scrim" hidden></div>
+
+<aside class="drawer" id="drawer-settings" hidden aria-label="设置">
+  <header class="drawer-head">
+    <h2>设置</h2>
+    <button class="ghost close" data-close="drawer-settings" aria-label="关闭设置">✕</button>
+  </header>
+  <div class="drawer-body">
+
+    <section class="group">
+      <h3>接口配置</h3>
+      <p class="group-note">三份独立的 OpenAI 兼容接口。密钥保存在本地 config/config.json，界面仅显示打码值；不改动即保留原密钥。</p>
+      <div id="api-forms"></div>
+    </section>
+
+    <section class="group">
+      <h3>辩题</h3>
+      <label class="field">
+        <span>辩题内容</span>
+        <textarea id="f-topic" rows="3" placeholder="例如：人工智能应当被赋予法律人格"></textarea>
+      </label>
+      <div class="row">
+        <label class="field small">
+          <span>自由辩论轮数</span>
+          <input type="number" id="f-rounds" min="1" max="20" value="7">
+        </label>
+        <button class="ghost" id="btn-gen-topic">生成候选选题</button>
+      </div>
+      <div class="candidates" id="candidates"></div>
+    </section>
+
+    <section class="group">
+      <h3>辩论风格（可选）</h3>
+      <label class="field">
+        <span>正方风格</span>
+        <input type="text" id="f-persona-pro" placeholder="例如：犀利直接，善用类比">
+      </label>
+      <label class="field">
+        <span>反方风格</span>
+        <input type="text" id="f-persona-con" placeholder="例如：沉稳严谨，长于数据">
+      </label>
+    </section>
+
+    <section class="group">
+      <h3>运行参数</h3>
+      <div class="row">
+        <label class="field small">
+          <span>失败重试次数</span>
+          <input type="number" id="f-retries" min="0" max="10" value="3">
+        </label>
+        <label class="field small">
+          <span>单次超时（秒）</span>
+          <input type="number" id="f-timeout" min="10" max="600" value="120">
+        </label>
+      </div>
+      <label class="check">
+        <input type="checkbox" id="f-sound" checked>
+        <span>辩论结束时播放提示音</span>
+      </label>
+    </section>
+
+  </div>
+  <footer class="drawer-foot">
+    <button class="primary" id="btn-save">保存设置</button>
+    <span class="hint" id="save-hint"></span>
+  </footer>
+</aside>
+
+<aside class="drawer" id="drawer-history" hidden aria-label="历史记录">
+  <header class="drawer-head">
+    <h2>历史记录</h2>
+    <button class="ghost close" data-close="drawer-history" aria-label="关闭历史">✕</button>
+  </header>
+  <div class="drawer-body">
+    <ul class="history-list" id="history-list"></ul>
+  </div>
+</aside>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
