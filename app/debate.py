@@ -2,7 +2,8 @@ import asyncio
 import json
 import re
 
-from app import prompts, storage
+from app import logbook, prompts, storage
+from app.config_store import REASONING_EFFORTS
 from app.llm import LLMConfig, LLMError, stream_chat
 
 SKIP_NOTICE = "（本次发言因接口连续失败被跳过）"
@@ -13,10 +14,12 @@ class AbortError(Exception):
 
 
 def _llm_config(api):
+    effort = str(api.get("reasoning_effort") or "high")
     return LLMConfig(nickname=api.get("nickname", ""), api_key=api.get("api_key", ""),
                      base_url=api.get("base_url", ""), model=api.get("model", ""),
                      temperature=float(api.get("temperature", 0.8)),
-                     max_tokens=int(api.get("max_tokens", 2048)))
+                     thinking_enabled=bool(api.get("thinking_enabled", True)),
+                     reasoning_effort=effort if effort in REASONING_EFFORTS else "high")
 
 
 class DebateRunner:
@@ -42,6 +45,7 @@ class DebateRunner:
         await self._run(force)
 
     def control(self, action):
+        logbook.operation("debate.control", action)
         if action == "pause":
             self._gate.clear()
         elif action == "resume":
@@ -66,6 +70,7 @@ class DebateRunner:
             self.stage = stage
         self.session["status"] = status
         self.storage.save_session(self.session)
+        logbook.operation("debate.status", f"{status} | stage={self.stage}")
         await self.bus.publish("state", {"status": status, "stage": self.stage,
                                          "totalRounds": self.rounds})
 
@@ -83,10 +88,14 @@ class DebateRunner:
                 return decision
             self._gate.clear()
 
-    async def _call(self, messages, side_key, msg_id=None):
+    async def _call(self, messages, side_key, msg_id=None, label=""):
         cfg = _llm_config(self.config["apis"][side_key])
         retries = int(self.config["runtime"].get("max_retries", 3))
         timeout = float(self.config["runtime"].get("timeout_seconds", 120))
+
+        def log_request(cfg_, url, payload):
+            logbook.api_request(cfg_.nickname, url, payload, label=label)
+
         attempt = 0
         while True:
             await self._await_gate()
@@ -107,12 +116,15 @@ class DebateRunner:
 
             try:
                 return await self.llm(cfg, messages, timeout=timeout,
-                                      on_reasoning=on_reasoning, on_content=on_content)
+                                      on_reasoning=on_reasoning, on_content=on_content,
+                                      logger=log_request)
             except LLMError as exc:
                 attempt += 1
                 if attempt <= retries:
+                    logbook.operation("llm.retry", f"{label} | 第 {attempt} 次重试 | {exc}")
                     await asyncio.sleep(min(2 ** attempt, 8))
                     continue
+                logbook.operation("llm.failed", f"{label} | 重试 {retries} 次后仍失败 | {exc}")
                 await self._set_status("PAUSED")
                 await self.bus.publish("error", {"stage": self.stage, "message": str(exc),
                                                  "retries": retries})
@@ -133,12 +145,14 @@ class DebateRunner:
         messages = prompts.build_stage_messages(stage=role, side=side, round_no=round_no,
                                                 total_rounds=self.rounds,
                                                 session=self.session, config=self.config)
-        result = await self._call(messages, side, msg_id=msg_id)
+        result = await self._call(messages, side, msg_id=msg_id, label=speaker)
         self.current = None
         msg = {"id": msg_id, "side": side, "role": role, "round": round_no,
                "speaker": speaker, "content": result["content"], "reasoning": result["reasoning"],
                "elapsed_ms": result["elapsed_ms"], "chars": result["chars"]}
         self.storage.append_message(self.session, msg)
+        logbook.operation("debate.speech", f"{speaker} | {result['chars']} 字 | "
+                                            f"{result['elapsed_ms']} ms")
         await self.bus.publish("message_end", {"id": msg_id, "elapsed_ms": result["elapsed_ms"],
                                                "chars": result["chars"]})
 
@@ -157,18 +171,22 @@ class DebateRunner:
 
     async def _validate_topic(self):
         if self.session.get("topic_source") == "generated":
+            logbook.operation("topic.check.skip", "选题由 API 生成，跳过合理性校验")
             return True
         messages = prompts.build_topic_check_messages(self.session["topic"],
                                                       prompts.load_requirements())
-        result = await self._call(messages, "judge")
+        result = await self._call(messages, "judge", label="选题合理性校验")
         ok, reason = self._parse_verdict(result["content"])
         if ok:
+            logbook.operation("topic.check.pass", self.session["topic"])
             return True
+        logbook.operation("topic.check.reject", f"{self.session['topic']} | 理由：{reason}")
         await self._set_status("WARNING")
         await self.bus.publish("warning", {"topic": self.session["topic"], "reason": reason})
         self._gate.clear()
         decision = await self._await_decision()
         if decision == "force":
+            logbook.operation("topic.force_start", self.session["topic"])
             return True
         raise AbortError()
 
@@ -176,19 +194,24 @@ class DebateRunner:
         self.current = {"id": "judge", "side": None, "role": "judge",
                         "speaker": "总结评价", "content": "", "reasoning": ""}
         messages = prompts.build_judge_messages(self.session, self.config)
-        result = await self._call(messages, "judge", msg_id="judge")
+        result = await self._call(messages, "judge", msg_id="judge", label="评委点评")
         self.current = None
         judge = {"content": result["content"], "reasoning": result["reasoning"],
                  "elapsed_ms": result["elapsed_ms"], "chars": result["chars"]}
         self.storage.set_judge(self.session, judge)
+        logbook.operation("debate.judge", f"{judge['chars']} 字 | {judge['elapsed_ms']} ms")
         await self.bus.publish("judge_end", {"elapsed_ms": judge["elapsed_ms"],
                                              "chars": judge["chars"]})
 
     async def _run(self, force):
         try:
             if not self.session.get("topic"):
+                logbook.operation("debate.abort", "未设置辩题")
                 await self._set_status("IDLE")
                 return
+            logbook.operation("debate.start",
+                              f"topic={self.session['topic']} | rounds={self.rounds} | "
+                              f"source={self.session.get('topic_source')} | force={force}")
             await self._set_status("VALIDATING", "validating")
             if not force and not await self._validate_topic():
                 return
@@ -205,8 +228,10 @@ class DebateRunner:
             await self._set_status("JUDGING", "judging")
             await self._judge()
             txt_path, md_path = self.storage.write_result(self.session)
+            logbook.operation("debate.result", f"{txt_path} | {md_path}")
             await self._set_status("DONE", "done")
             await self.bus.publish("done", {"txt_path": str(txt_path), "md_path": str(md_path)})
         except AbortError:
             self.storage.save_session(self.session)
+            logbook.operation("debate.aborted", "辩论被中止")
             await self._set_status("ABORTED", "aborted")
