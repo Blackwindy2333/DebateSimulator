@@ -18,10 +18,11 @@ commits: cdc0387..1714a65
 再由第三个 AI 担任评委判定「哪方更胜一筹」并说明理由。全过程以 SSE 逐字实时显示在网页上，
 刷新浏览器不中断，结束后自动落盘。
 
-应用解决了三个具体问题：**赛制编排**（把多阶段、多轮次、带完整上下文的对话序列自动化）、
+应用解决了四个具体问题：**赛制编排**（把多阶段、多轮次、带完整上下文的对话序列自动化）、
 **选题质量把关**（按仓库内 `DebateRequirements.txt` 的标准让 AI 判定辩题是否合格，
-不合格则暂停并给出理由）、以及 **推理内容与发言内容的分离显示**
-（把 `reasoning_content` / `<thinking>` 等思考内容剥离到独立的可折叠区块）。
+不合格则暂停并给出理由）、**推理内容与发言内容的分离显示**
+（把 `reasoning_content` / `<thinking>` 等思考内容剥离到独立的可折叠区块），
+以及 **可观测性**（双日志：操作日志记录全过程，请求日志记录每次 API 请求的完整请求体）。
 
 ## Architecture
 
@@ -37,8 +38,9 @@ app/main.py  ── FastAPI 路由、SSE 端点、config/history REST
   │
   ├─ app/debate.py   DebateRunner：状态机、控制信号、重试
   │     ├─ app/prompts.py   模板加载 + 消息组装（含上下文注入）
-  │     ├─ app/llm.py       stream_chat 流式调用 + ReasoningSplitter
+  │     ├─ app/llm.py       build_payload 请求体构造 + stream_chat 流式调用 + ReasoningSplitter
   │     ├─ app/storage.py   缓存生命周期 + 结果落盘
+  │     ├─ app/logbook.py   双日志（操作日志 + API 请求日志）
   │     └─ app/events.py    EventBus 广播
   │
   ├─ app/config_store.py    config/config.json 持久化
@@ -64,7 +66,8 @@ IDLE → VALIDATING →[不合格]→ WARNING ──force──┐
 | --- | --- |
 | `app/config_store.py` | `DEFAULT_CONFIG`、`load_config()`、`save_config()`、`merge_defaults()` |
 | `app/storage.py` | `init_session()`、`append_message()`、`set_judge()`、`speaker_label()`、`format_transcript()`、`write_result()` |
-| `app/llm.py` | `LLMConfig`、`LLMError`、`ReasoningSplitter`、`stream_chat(cfg, messages, *, timeout, on_reasoning, on_content)` |
+| `app/llm.py` | `LLMConfig`、`LLMError`、`build_payload(cfg, messages)`、`ReasoningSplitter`、`stream_chat(cfg, messages, *, timeout, on_reasoning, on_content, logger)` |
+| `app/logbook.py` | `start_session()`、`operation(action, detail)`、`api_request(nickname, url, payload, label)`、`paths()` |
 | `app/prompts.py` | `build_stage_messages()`、`build_topic_check_messages()`、`build_topic_gen_messages()`、`build_judge_messages()` |
 | `app/debate.py` | `DebateRunner(config, bus, llm=stream_chat, storage_mod=storage)`、`AbortError` |
 | `app/events.py` | `EventBus.subscribe() / unsubscribe() / publish()` |
@@ -86,6 +89,12 @@ IDLE → VALIDATING →[不合格]→ WARNING ──force──┐
   无锚定地识别会吞掉正常语句。
 - **API Key 明文存本地、界面打码**。`GET /api/config` 返回 `sk-abc****mnop` 形式，
   `PUT` 时若收到含 `**` 的值则保留磁盘上的原密钥——用户无需重输即可改其它字段。
+- **思考模式按接口独立控制**，请求体固定发送 `thinking.type`，并**仅在开启思考时才附带**
+  `reasoning_effort`。理由：不接受该字段的端点在不启用思考时收到它容易直接报错，
+  条件发送既表达了用户意图又保住了兼容性。
+- **不再发送 `max_tokens`**，把输出长度交给服务端默认值，避免各家的上限差异导致截断或报错。
+- **日志分两份而不是一份**。操作日志给人读（复盘流程），请求日志给机器读（逐字比对 payload）。
+  两份都在应用启动时按时间戳新建，历史日志不被覆盖。
 
 ## Usage
 
@@ -99,7 +108,9 @@ run.bat                 :: 建虚拟环境 + 装依赖 + 起服务 + 自动开�
 
 | 配置项 | 说明 |
 | --- | --- |
-| 正方 / 反方 / 总结评价 接口 | 各自的 昵称 / API Key / Base URL / 模型 / 温度 / 最大输出 Token |
+| 正方 / 反方 / 总结评价 接口 | 各自的 昵称 / API Key / Base URL / 模型 / 温度 |
+| 思考模式 | 每份接口单独开关，对应请求体 `thinking.type` = `enabled` / `disabled` |
+| 思考强度 | `low` / `high` / `max`，对应 `reasoning_effort`；关闭思考时不发送 |
 | 辩题 | 手填，或点「生成候选选题」拿 3~5 个候选点选（此来源会**跳过**合理性校验） |
 | 自由辩论轮数 | 设为 N，则正反双方在自由辩论阶段**各有 N 次**发言 |
 | 辩论风格 | 可选，注入到对应方的 system prompt |
@@ -117,19 +128,24 @@ python -m tests.mock_openai        # 终端 A：假接口，监听 8001
 结果：`Results/Result_YYYYMMDD_HHMMSS.txt`（第 1 行辩题，其后每条为「发言者身份」+ 正文，
 末尾附「总结评价」段），并输出同名 `.md`。
 
+日志：`Logs/Operations_<时间>.log`（操作与变更）与 `Logs/ApiRequests_<时间>.log`
+（每次请求的完整请求体）。
+
 ## Verification
 
-`python -m pytest -v` → **29 passed**（7 个测试文件，约 26 秒）。
+`python -m pytest -q` → **39 passed**（9 个测试文件，约 26 秒）。
 
 | 测试文件 | 覆盖 |
 | --- | --- |
-| `test_config_store.py` (3) | 默认值深合并、文件创建、读写往返 |
+| `test_config_store.py` (4) | 默认值深合并、文件创建、读写往返、**默认浅色且无 max_tokens** |
 | `test_storage.py` (4) | 发言者标签、启动清缓存、txt 落盘格式、记录拼接 |
 | `test_llm.py` (6) | 思考标签剥离：纯文本、`<thinking>` 块、跨 chunk 断标签、中文锚定、**中文误伤防护**、flush |
+| `test_payload.py` (2) | 请求体构造：开思考时含 `reasoning_effort`、关思考时省略、**无 max_tokens** |
+| `test_logbook.py` (4) | 双日志文件创建、操作记录落盘、请求日志含完整 payload、未显式开会话时自动落盘 |
 | `test_prompts.py` (4) | 变量替换、一辩不带过往发言、自由辩论带全部发言、人设注入 |
-| `test_debate.py` (4) | 8 条发言顺序与落盘、force 跳过校验、不合格→WARNING→force、中止中断 |
-| `test_api.py` (6) | 配置读写、密钥打码与保留、状态端点、历史读写、**路径穿越拦截** |
-| `test_e2e.py` (2) | 对着进程内假接口跑完整辩论；校验请求确实携带全量历史 |
+| `test_debate.py` (6) | 8 条发言顺序与落盘、force 跳过校验、不合格→WARNING→force、中止中断、思考参数映射与非法值回退 |
+| `test_api.py` (6) | 配置读写、密钥打码与保留、状态端点、历史读写、**路径穿越拦截**、**启动清缓存** |
+| `test_e2e.py` (2) | 对着进程内假接口跑完整辩论；校验请求携带全量历史且日志记录了完整 payload |
 
 端到端测试是真正的验证证据：它在后台线程起一个假 OpenAI 接口（会先吐 `reasoning_content`
 再吐 `content` 的 SSE 流），用**真实的** `stream_chat` 跑完 2 轮完整辩论，断言
