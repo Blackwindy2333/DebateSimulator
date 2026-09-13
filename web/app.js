@@ -49,10 +49,21 @@ function buildApiForms() {
       <div class="grid-2">
         <label class="field"><span>温度</span>
           <input id="api-${meta.key}-temp" type="number" min="0" max="2" step="0.1"></label>
-        <label class="field"><span>最大输出 Token</span>
-          <input id="api-${meta.key}-max" type="number" min="64" max="32000" step="64"></label>
-      </div>`;
+        <label class="field"><span>思考强度</span>
+          <select id="api-${meta.key}-effort">
+            <option value="low">low</option>
+            <option value="high">high</option>
+            <option value="max">max</option>
+          </select></label>
+      </div>
+      <label class="check">
+        <input type="checkbox" id="api-${meta.key}-thinking">
+        <span>开启思考模式</span>
+      </label>`;
     host.appendChild(card);
+    card.querySelector(`#api-${meta.key}-thinking`).addEventListener('change', (e) => {
+      card.querySelector(`#api-${meta.key}-effort`).disabled = !e.currentTarget.checked;
+    });
   }
 }
 
@@ -64,7 +75,11 @@ function fillForm() {
     $(`#api-${key}-key`).value = api.api_key || '';
     $(`#api-${key}-base`).value = api.base_url || '';
     $(`#api-${key}-temp`).value = api.temperature ?? 0.8;
-    $(`#api-${key}-max`).value = api.max_tokens ?? 2048;
+    const thinking = api.thinking_enabled !== false;
+    $(`#api-${key}-thinking`).checked = thinking;
+    const effort = $(`#api-${key}-effort`);
+    effort.value = api.reasoning_effort || 'high';
+    effort.disabled = !thinking;
   }
   $('#f-topic').value = config.debate.topic || '';
   $('#f-rounds').value = config.debate.rounds ?? 7;
@@ -85,7 +100,8 @@ function collectForm() {
     next.apis[key].api_key = $(`#api-${key}-key`).value.trim();
     next.apis[key].base_url = $(`#api-${key}-base`).value.trim();
     next.apis[key].temperature = Number($(`#api-${key}-temp`).value);
-    next.apis[key].max_tokens = Number($(`#api-${key}-max`).value);
+    next.apis[key].thinking_enabled = $(`#api-${key}-thinking`).checked;
+    next.apis[key].reasoning_effort = $(`#api-${key}-effort`).value || 'high';
   }
   next.debate.topic = $('#f-topic').value.trim();
   next.debate.rounds = Number($('#f-rounds').value) || 1;
@@ -443,6 +459,14 @@ function closeDrawers() {
 
 async function openHistory() {
   const res = await (await fetch('/api/history')).json();
+  const logs = await (await fetch('/api/logs')).json();
+  const logLine = $('#log-paths');
+  logLine.textContent = '';
+  for (const [label, path] of [['操作日志', logs.operations], ['请求日志', logs.api_requests]]) {
+    const row = document.createElement('span');
+    row.textContent = `${label}：${path || '（尚未开始）'}`;
+    logLine.appendChild(row);
+  }
   const body = document.querySelector('#drawer-history .drawer-body');
   body.innerHTML = '';
   const list = document.createElement('ul');
