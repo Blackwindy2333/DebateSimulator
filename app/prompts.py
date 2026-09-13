@@ -51,7 +51,7 @@ def build_stage_messages(*, stage, side, round_no, total_rounds, session, config
     else:
         user = render(load_template("closing"), side_cn=side_cn)
     transcript = storage.format_transcript(session)
-    if stage in ("free", "closing") and transcript:
+    if transcript:
         user += "\n\n【此前发言记录】\n" + transcript
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
