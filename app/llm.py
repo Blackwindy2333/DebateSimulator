@@ -25,7 +25,26 @@ class LLMConfig:
     base_url: str
     model: str
     temperature: float = 0.8
-    max_tokens: int = 2048
+    thinking_enabled: bool = True
+    reasoning_effort: str = "high"
+
+
+def build_payload(cfg, messages):
+    """构造 OpenAI 兼容请求体。
+
+    thinking 恒定为 {"type": "enabled" | "disabled"}；
+    reasoning_effort 仅在开启思考时发送，避免对不接受该字段的端点造成报错。
+    """
+    payload = {
+        "model": cfg.model,
+        "messages": messages,
+        "stream": True,
+        "temperature": cfg.temperature,
+        "thinking": {"type": "enabled" if cfg.thinking_enabled else "disabled"},
+    }
+    if cfg.thinking_enabled:
+        payload["reasoning_effort"] = cfg.reasoning_effort
+    return payload
 
 
 class ReasoningSplitter:
@@ -109,10 +128,11 @@ async def _maybe_await(value):
         await value
 
 
-async def stream_chat(cfg, messages, *, timeout=120.0, on_reasoning=None, on_content=None):
+async def stream_chat(cfg, messages, *, timeout=120.0, on_reasoning=None, on_content=None, logger=None):
     url = f"{cfg.base_url.rstrip('/')}/chat/completions"
-    payload = {"model": cfg.model, "messages": messages, "stream": True,
-               "temperature": cfg.temperature, "max_tokens": cfg.max_tokens}
+    payload = build_payload(cfg, messages)
+    if logger is not None:
+        logger(cfg, url, payload)
     headers = {"Authorization": f"Bearer {cfg.api_key}", "Content-Type": "application/json"}
     splitter = ReasoningSplitter()
     reasoning_parts, content_parts = [], []
