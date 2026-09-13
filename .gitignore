@@ -5,6 +5,7 @@ venv/
 .pytest_cache/
 cache/
 Results/
+Logs/
 config/config.json
 .playwright-cli/
 output/
