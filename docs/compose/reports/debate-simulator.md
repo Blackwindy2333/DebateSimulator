@@ -24,6 +24,10 @@ commits: cdc0387..1714a65
 （把 `reasoning_content` / `<thinking>` 等思考内容剥离到独立的可折叠区块），
 以及 **可观测性**（双日志：操作日志记录全过程，请求日志记录每次 API 请求的完整请求体）。
 
+前端另有两项呈现能力：**思考计时**（思考中实时显示 `Thinking 12.3s`，思考结束转为灰色
+`Thought 12.3s`，与原有的字数、总耗时并存）与 **Markdown 渲染**（发言按 Markdown 排版，
+渲染前先转义 HTML 再生成白名单标签，模型输出无法注入脚本）。
+
 ## Architecture
 
 单机双进程结构（同一进程内）：FastAPI 后端负责编排与落盘，原生 HTML/CSS/JS 前端负责渲染，
@@ -139,19 +143,22 @@ python -m tests.mock_openai        # 终端 A：假接口，监听 8001
 
 ## Verification
 
-`python -m pytest -q` → **40 passed**（9 个测试文件，约 26 秒）。
+`python -m pytest -q` → **42 passed**（9 个测试文件，约 26 秒）。
 
 | 测试文件 | 覆盖 |
 | --- | --- |
-| `test_config_store.py` (4) | 默认值深合并、文件创建、读写往返、**默认浅色且无 max_tokens** |
+| `test_config_store.py` (5) | 默认值深合并、文件创建、读写往返、**默认浅色且无 max_tokens**、**已存在配置不回写** |
 | `test_storage.py` (4) | 发言者标签、启动清缓存、txt 落盘格式、记录拼接 |
 | `test_llm.py` (6) | 思考标签剥离：纯文本、`<thinking>` 块、跨 chunk 断标签、中文锚定、**中文误伤防护**、flush |
 | `test_payload.py` (2) | 请求体构造：开思考时含 `reasoning_effort`、关思考时省略、**无 max_tokens** |
 | `test_logbook.py` (4) | 双日志文件创建、操作记录落盘、请求日志含完整 payload、未显式开会话时自动落盘 |
 | `test_prompts.py` (5) | 变量替换、首条发言不带记录、**反方一辩可见正方立论**、自由辩论带全部发言、人设注入 |
-| `test_debate.py` (6) | 8 条发言顺序与落盘、force 跳过校验、不合格→WARNING→force、中止中断、思考参数映射与非法值回退 |
+| `test_debate.py` (7) | 8 条发言顺序与落盘、force 跳过校验、不合格→WARNING→force、中止中断、思考参数映射与非法值回退、**思考耗时计算** |
 | `test_api.py` (7) | 配置读写、密钥打码与保留、状态端点、历史读写、**路径穿越拦截**、**启动清缓存** |
-| `test_e2e.py` (2) | 对着进程内假接口跑完整辩论；校验请求携带全量历史且日志记录了完整 payload |
+| `test_e2e.py` (2) | 对着进程内假接口跑完整辩论；校验请求携带全量历史、思考耗时大于 0，且日志记录了完整 payload |
+
+前端 Markdown 渲染器另用 Node 单独验证 18 个用例（标题/列表/引用/行内与围栏代码/链接/换行、
+流式未闭合围栏，以及 HTML 注入、`<img onerror>`、`javascript:` 伪协议等安全场景），全部通过。
 
 端到端测试是真正的验证证据：它在后台线程起一个假 OpenAI 接口（会先吐 `reasoning_content`
 再吐 `content` 的 SSE 流），用**真实的** `stream_chat` 跑完 2 轮完整辩论，断言
@@ -168,6 +175,7 @@ python -m tests.mock_openai        # 终端 A：假接口，监听 8001
 - [fix] `_judge` 曾以 `msg_id="judge"` 调用公共 `_call`，而那时 `self.current` 是 `None`，`dict(None)` 崩溃——为评价调用补上自己的 live 条目。历史下载路由用普通 `{name}` 路径参数时 Starlette 根本不会把 `..` 路由进来，守卫形同虚设——改用 `{name:path}` + `resolve()` 包含性检查后才真正生效。
 - [pivot] 一辩阶段最初按需求「只需简单介绍现状」不携带过往发言，实测后发现反方一辩无法回应正方立论——改为除全场首条发言外一律携带记录块。
 - [lesson] `requirements.txt` 一开始按预估钉版本，与实际环境不符；改为按跑通测试的版本钉死，环境可复现。
+- [lesson] `run.bat` 最初由工具写成 LF 换行，cmd.exe 解析批处理标签异常，表现为双击后窗口一闪即退。批处理必须 CRLF——已写进 `.gitattributes`（`*.bat text eol=crlf`）固化，并在脚本末尾统一 `pause`。
 
 ## Source Materials
 
