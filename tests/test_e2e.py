@@ -123,6 +123,13 @@ def test_transcript_carries_full_history_to_prompt(tmp_path, monkeypatch):
     runner = debate.DebateRunner(_cfg(), EventBus(), llm=spy)
     asyncio.run(runner.start())
 
+    # 反方一辩必须看到正方一辩的立论；正方一辩是全场首条发言，不带记录块
+    pro_opening = captured[1]
+    assert "【此前发言记录】" not in pro_opening[-1]["content"]
+    con_opening = captured[2]
+    assert "【此前发言记录】" in con_opening[-1]["content"]
+    assert "正方一辩" in con_opening[-1]["content"]
+
     closing = captured[-2]  # 总结陈词（其后为评委）
     closing_text = closing[-1]["content"]
     assert "【此前发言记录】" in closing_text
