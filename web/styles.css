@@ -370,13 +370,60 @@ button { font: inherit; cursor: pointer; }
   white-space: nowrap;
 }
 
-.content { white-space: pre-wrap; word-break: break-word; font-size: 14.5px; }
-.content:empty::after,
-.bubble.live .content:empty::after { content: ""; }
+/* 正文按 Markdown 渲染，换行由渲染器转成 <br> */
+.content { white-space: normal; word-break: break-word; font-size: 14.5px; }
+.content > :first-child { margin-top: 0; }
+.content > :last-child { margin-bottom: 0; }
+.content p { margin: 0 0 .6em; }
 
-.bubble.live .content:not(:empty)::after {
+.content .md-h { margin: .75em 0 .35em; font-weight: 700; line-height: 1.35; }
+.content h3.md-h { font-size: 1.12em; }
+.content h4.md-h { font-size: 1.04em; }
+.content h5.md-h, .content h6.md-h { font-size: 1em; }
+
+.content .md-list { margin: .45em 0 .65em; padding-left: 1.45em; }
+.content .md-list li { margin: .18em 0; }
+
+.content .md-quote {
+  margin: .55em 0;
+  padding: .3em .85em;
+  border-left: 3px solid var(--rule);
+  color: var(--muted);
+}
+
+.content .md-hr { border: none; border-top: 1px solid var(--rule); margin: .85em 0; }
+
+.content .md-inline {
+  font-family: var(--font-mono);
+  font-size: .88em;
+  background: var(--panel-2);
+  padding: .08em .38em;
+  border-radius: 4px;
+}
+
+.content .md-code {
+  margin: .55em 0;
+  padding: .65em .85em;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--panel-2);
+  overflow-x: auto;
+}
+.content .md-code code {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre;
+}
+
+.content a { color: var(--con); text-decoration: underline; text-underline-offset: 2px; }
+.content strong { font-weight: 700; }
+.content del { color: var(--muted); }
+
+/* 正在发言：光标挂在身份徽标上，避免干扰 Markdown 排版 */
+.bubble.live .badge::after {
   content: "▍";
-  color: var(--pro);
+  margin-left: 5px;
   animation: blink 1s steps(2, start) infinite;
 }
 @keyframes blink { 50% { opacity: 0; } }
@@ -399,6 +446,16 @@ button { font: inherit; cursor: pointer; }
 .thinking-toggle[hidden] { display: none; }
 .thinking-toggle::before { content: "▸"; transition: transform .15s; }
 .thinking-toggle[aria-expanded="true"]::before { transform: rotate(90deg); }
+
+.think-timer {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: .02em;
+  color: var(--pro);
+  font-variant-numeric: tabular-nums;
+}
+.think-timer:empty { display: none; }
+.think-timer.done { color: var(--muted); }
 
 .thinking {
   margin-top: 8px;
