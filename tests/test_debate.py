@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 from app import debate as debate_mod
 from app import logbook, storage
@@ -42,6 +43,14 @@ def _patch(tmp_path, monkeypatch):
     monkeypatch.setattr(logbook, "LOGS_DIR", tmp_path / "Logs")
     monkeypatch.setattr(logbook, "_operations_path", None)
     monkeypatch.setattr(logbook, "_api_requests_path", None)
+
+
+def test_thinking_ms_measures_reasoning_window():
+    assert debate_mod._thinking_ms({"reasoning_at": None, "content_at": None}) == 0
+    assert debate_mod._thinking_ms({"reasoning_at": 1.0, "content_at": 3.5}) == 2500
+    # 只有思考、还没出正文时算到当前时刻
+    assert debate_mod._thinking_ms({"reasoning_at": time.monotonic() - 0.2,
+                                    "content_at": None}) >= 190
 
 
 def test_llm_config_maps_thinking_params():
