@@ -2,7 +2,7 @@ import json
 
 from fastapi.testclient import TestClient
 
-from app import config_store, storage
+from app import config_store, logbook, storage
 from app.main import create_app
 
 
@@ -10,6 +10,10 @@ def _patch(tmp_path, monkeypatch):
     monkeypatch.setattr(config_store, "CONFIG_PATH", tmp_path / "config.json")
     monkeypatch.setattr(storage, "CACHE_PATH", tmp_path / "cache" / "session.json")
     monkeypatch.setattr(storage, "RESULTS_DIR", tmp_path / "Results")
+    # 隔离日志，避免测试往仓库 Logs/ 里写文件
+    monkeypatch.setattr(logbook, "LOGS_DIR", tmp_path / "Logs")
+    monkeypatch.setattr(logbook, "_operations_path", None)
+    monkeypatch.setattr(logbook, "_api_requests_path", None)
 
 
 def test_startup_clears_stale_cache(tmp_path, monkeypatch):
