@@ -1,2 +1,6 @@
-# Auto detect text files and perform LF normalization
+# 自动识别文本文件并做 LF 归一化
 * text=auto
+
+# Windows 批处理必须使用 CRLF，否则 cmd.exe 解析异常（表现为双击后窗口立即关闭）
+*.bat text eol=crlf
+*.cmd text eol=crlf
