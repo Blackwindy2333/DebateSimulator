@@ -1,11 +1,11 @@
 import asyncio
 import threading
 import time
+from pathlib import Path
 
-import pytest
 import uvicorn
 
-from app import debate, storage
+from app import debate, logbook, storage
 from app.events import EventBus
 from tests.mock_openai import app as mock_app
 
@@ -31,7 +31,8 @@ def _ensure_server():
 
 def _cfg():
     api = {"api_key": "test-key", "base_url": f"http://127.0.0.1:{PORT}/v1",
-           "model": "mock-model", "temperature": 0.7, "max_tokens": 256}
+           "model": "mock-model", "temperature": 0.7,
+           "thinking_enabled": True, "reasoning_effort": "high"}
     return {"apis": {"pro": {"nickname": "正方甲", **api},
                      "con": {"nickname": "反方乙", **api},
                      "judge": {"nickname": "评委丙", **api}},
@@ -42,10 +43,17 @@ def _cfg():
             "ui": {}}
 
 
-def test_end_to_end_against_mock_api(tmp_path, monkeypatch):
-    _ensure_server()
+def _patch(tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "CACHE_PATH", tmp_path / "cache" / "session.json")
     monkeypatch.setattr(storage, "RESULTS_DIR", tmp_path / "Results")
+    monkeypatch.setattr(logbook, "LOGS_DIR", tmp_path / "Logs")
+    monkeypatch.setattr(logbook, "_operations_path", None)
+    monkeypatch.setattr(logbook, "_api_requests_path", None)
+
+
+def test_end_to_end_against_mock_api(tmp_path, monkeypatch):
+    _ensure_server()
+    _patch(tmp_path, monkeypatch)
 
     runner = debate.DebateRunner(_cfg(), EventBus())
     asyncio.run(runner.start())
@@ -85,12 +93,25 @@ def test_end_to_end_against_mock_api(tmp_path, monkeypatch):
     assert "总结评价" in lines
     assert (tmp_path / "Results" / txts[0].name.replace(".txt", ".md")).exists()
 
+    # 双日志：操作日志记录全过程，请求日志记录每次请求的完整请求体
+    logs = logbook.paths()
+    operations = Path(logs["operations"]).read_text("utf-8")
+    requests = Path(logs["api_requests"]).read_text("utf-8")
+    assert "debate.start" in operations and "debate.result" in operations
+    assert "debate.speech" in operations and "debate.judge" in operations
+    assert "正方一辩" in requests
+    # 请求体包含必要的控制字段
+    assert '"thinking": {' in requests and '"type": "enabled"' in requests
+    assert '"reasoning_effort": "high"' in requests
+    assert '"model": "mock-model"' in requests and '"stream": true' in requests
+    # 不再发送 max_tokens
+    assert "max_tokens" not in requests
+
 
 def test_transcript_carries_full_history_to_prompt(tmp_path, monkeypatch):
     """自由辩论第 2 轮 / 总结陈词的请求里必须包含此前所有发言。"""
     _ensure_server()
-    monkeypatch.setattr(storage, "CACHE_PATH", tmp_path / "cache" / "session.json")
-    monkeypatch.setattr(storage, "RESULTS_DIR", tmp_path / "Results")
+    _patch(tmp_path, monkeypatch)
 
     captured = []
 
