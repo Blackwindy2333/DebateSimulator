@@ -109,8 +109,11 @@ IDLE → VALIDATING →[不合格]→ WARNING ──force──┐
 ## Usage
 
 ```bat
-run.bat                 :: 建虚拟环境 + 装依赖 + 起服务 + 自动开浏览器
+run.bat                 :: 检查端口占用 → 建虚拟环境 → 装依赖 → 起服务 → 自动开浏览器
 ```
+
+`run.bat` 启动前会读取 `config/config.json` 的 `runtime.port`（读不到则用 8000），
+若该端口已被监听则打印占用进程 PID 并先关闭它，避免「端口已被占用」导致启动失败。
 
 手动：`pip install -r requirements.txt` 然后 `python -m app`（默认 `http://127.0.0.1:8000`）。
 
