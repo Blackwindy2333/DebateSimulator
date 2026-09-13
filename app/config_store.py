@@ -39,12 +39,18 @@ def merge_defaults(cfg):
 
 
 def load_config():
+    """启动时读取配置。
+
+    文件不存在 → 按默认值生成一份；已存在 → 直接读取（缺失字段在内存中补齐，
+    但**不改写磁盘**），避免每次启动都覆盖用户的文件。
+
+    `config/config.json` 已列入 .gitignore，不纳入版本控制。
+    """
     if CONFIG_PATH.exists():
-        merged = merge_defaults(json.loads(CONFIG_PATH.read_text("utf-8")))
-    else:
-        merged = merge_defaults({})
-    save_config(merged)
-    return merged
+        return merge_defaults(json.loads(CONFIG_PATH.read_text("utf-8")))
+    fresh = merge_defaults({})
+    save_config(fresh)
+    return fresh
 
 
 def save_config(cfg):
