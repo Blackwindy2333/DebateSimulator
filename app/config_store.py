@@ -7,16 +7,21 @@ CONFIG_PATH = Path("config") / "config.json"
 DEFAULT_CONFIG = {
     "apis": {
         "pro": {"nickname": "正方", "api_key": "", "base_url": "https://api.openai.com/v1",
-                "model": "", "temperature": 0.8, "max_tokens": 2048},
+                "model": "", "temperature": 0.8,
+                "thinking_enabled": True, "reasoning_effort": "high"},
         "con": {"nickname": "反方", "api_key": "", "base_url": "https://api.openai.com/v1",
-                "model": "", "temperature": 0.8, "max_tokens": 2048},
+                "model": "", "temperature": 0.8,
+                "thinking_enabled": True, "reasoning_effort": "high"},
         "judge": {"nickname": "裁判", "api_key": "", "base_url": "https://api.openai.com/v1",
-                  "model": "", "temperature": 0.3, "max_tokens": 2048},
+                  "model": "", "temperature": 0.3,
+                  "thinking_enabled": True, "reasoning_effort": "high"},
     },
     "debate": {"topic": "", "rounds": 7, "personas": {"pro": "", "con": ""}},
     "runtime": {"max_retries": 3, "timeout_seconds": 120, "port": 8000, "auto_open_browser": True},
-    "ui": {"theme": "dark", "sound": True},
+    "ui": {"theme": "light", "sound": True},
 }
+
+REASONING_EFFORTS = ("low", "high", "max")
 
 
 def merge_defaults(cfg):
