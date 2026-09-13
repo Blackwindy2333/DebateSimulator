@@ -72,6 +72,10 @@ def test_end_to_end_against_mock_api(tmp_path, monkeypatch):
     assert all(m["content"] for m in messages)
     assert all(m["chars"] > 0 and m["elapsed_ms"] >= 0 for m in messages)
 
+    # 思考计时：假接口先吐 reasoning_content 再吐 content，故思考耗时必然大于 0
+    assert all(m["thinking_ms"] > 0 for m in messages)
+    assert runner.session["judge"]["thinking_ms"] > 0
+
     # 思考内容被剥离到独立字段，未混入正文
     assert all(m["reasoning"] for m in messages)
     assert all("我需要先梳理对方的论证结构" not in m["content"] for m in messages)
