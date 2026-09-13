@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+import time
 
 from app import logbook, prompts, storage
 from app.config_store import REASONING_EFFORTS
@@ -20,6 +21,15 @@ def _llm_config(api):
                      temperature=float(api.get("temperature", 0.8)),
                      thinking_enabled=bool(api.get("thinking_enabled", True)),
                      reasoning_effort=effort if effort in REASONING_EFFORTS else "high")
+
+
+def _thinking_ms(timing):
+    """思考阶段耗时：首个思考增量 → 首个正文增量（期间未产生正文则算到此刻）。"""
+    start = timing["reasoning_at"]
+    if start is None:
+        return 0
+    end = timing["content_at"] if timing["content_at"] is not None else time.monotonic()
+    return int(round((end - start) * 1000))
 
 
 class DebateRunner:
@@ -100,24 +110,31 @@ class DebateRunner:
         while True:
             await self._await_gate()
             on_reasoning = on_content = None
+            timing = {"reasoning_at": None, "content_at": None}
             if msg_id is not None:
                 await self.bus.publish("message_start", dict(self.current))
                 accumulator = {"reasoning": "", "content": ""}
 
                 async def on_reasoning(text):
+                    if timing["reasoning_at"] is None:
+                        timing["reasoning_at"] = time.monotonic()
                     accumulator["reasoning"] += text
                     self.current["reasoning"] = accumulator["reasoning"]
                     await self.bus.publish("reasoning_delta", {"id": msg_id, "text": text})
 
                 async def on_content(text):
+                    if timing["content_at"] is None:
+                        timing["content_at"] = time.monotonic()
                     accumulator["content"] += text
                     self.current["content"] = accumulator["content"]
                     await self.bus.publish("content_delta", {"id": msg_id, "text": text})
 
             try:
-                return await self.llm(cfg, messages, timeout=timeout,
-                                      on_reasoning=on_reasoning, on_content=on_content,
-                                      logger=log_request)
+                result = await self.llm(cfg, messages, timeout=timeout,
+                                        on_reasoning=on_reasoning, on_content=on_content,
+                                        logger=log_request)
+                result["thinking_ms"] = _thinking_ms(timing)
+                return result
             except LLMError as exc:
                 attempt += 1
                 if attempt <= retries:
@@ -134,7 +151,8 @@ class DebateRunner:
                     attempt = 0
                     continue
                 if decision == "skip":
-                    return {"content": SKIP_NOTICE, "reasoning": "", "elapsed_ms": 0, "chars": 0}
+                    return {"content": SKIP_NOTICE, "reasoning": "", "elapsed_ms": 0,
+                            "chars": 0, "thinking_ms": 0}
                 raise AbortError()
 
     async def _say(self, side, role, round_no=None):
@@ -149,12 +167,15 @@ class DebateRunner:
         self.current = None
         msg = {"id": msg_id, "side": side, "role": role, "round": round_no,
                "speaker": speaker, "content": result["content"], "reasoning": result["reasoning"],
-               "elapsed_ms": result["elapsed_ms"], "chars": result["chars"]}
+               "elapsed_ms": result["elapsed_ms"], "chars": result["chars"],
+               "thinking_ms": result.get("thinking_ms", 0)}
         self.storage.append_message(self.session, msg)
         logbook.operation("debate.speech", f"{speaker} | {result['chars']} 字 | "
-                                            f"{result['elapsed_ms']} ms")
+                                            f"{result['elapsed_ms']} ms | "
+                                            f"思考 {msg['thinking_ms']} ms")
         await self.bus.publish("message_end", {"id": msg_id, "elapsed_ms": result["elapsed_ms"],
-                                               "chars": result["chars"]})
+                                               "chars": result["chars"],
+                                               "thinking_ms": msg["thinking_ms"]})
 
     @staticmethod
     def _parse_verdict(text):
@@ -197,11 +218,14 @@ class DebateRunner:
         result = await self._call(messages, "judge", msg_id="judge", label="评委点评")
         self.current = None
         judge = {"content": result["content"], "reasoning": result["reasoning"],
-                 "elapsed_ms": result["elapsed_ms"], "chars": result["chars"]}
+                 "elapsed_ms": result["elapsed_ms"], "chars": result["chars"],
+                 "thinking_ms": result.get("thinking_ms", 0)}
         self.storage.set_judge(self.session, judge)
-        logbook.operation("debate.judge", f"{judge['chars']} 字 | {judge['elapsed_ms']} ms")
+        logbook.operation("debate.judge", f"{judge['chars']} 字 | {judge['elapsed_ms']} ms | "
+                                           f"思考 {judge['thinking_ms']} ms")
         await self.bus.publish("judge_end", {"elapsed_ms": judge["elapsed_ms"],
-                                             "chars": judge["chars"]})
+                                             "chars": judge["chars"],
+                                             "thinking_ms": judge["thinking_ms"]})
 
     async def _run(self, force):
         try:
