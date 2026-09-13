@@ -1,7 +1,7 @@
 import asyncio
 
 from app import debate as debate_mod
-from app import storage
+from app import logbook, storage
 from app.events import EventBus
 
 
@@ -9,8 +9,12 @@ class FakeLLM:
     def __init__(self):
         self.calls = []
 
-    async def __call__(self, cfg, messages, *, timeout=120.0, on_reasoning=None, on_content=None):
+    async def __call__(self, cfg, messages, *, timeout=120.0, on_reasoning=None,
+                       on_content=None, logger=None):
         self.calls.append(messages)
+        if logger is not None:
+            logger(cfg, f"{cfg.base_url.rstrip('/')}/chat/completions",
+                   {"model": cfg.model, "messages": messages})
         user = messages[-1]["content"]
         if '"verdict"' in user:
             return {"content": '{"verdict": "合理", "reason": ""}',
@@ -22,8 +26,8 @@ class FakeLLM:
 
 
 def _cfg(rounds=2):
-    api = {"api_key": "k", "base_url": "http://x", "model": "m",
-           "temperature": 0.8, "max_tokens": 10}
+    api = {"api_key": "k", "base_url": "http://x", "model": "m", "temperature": 0.8,
+           "thinking_enabled": True, "reasoning_effort": "high"}
     return {"apis": {"pro": {"nickname": "甲", **api},
                      "con": {"nickname": "乙", **api},
                      "judge": {"nickname": "丙", **api}},
@@ -35,6 +39,25 @@ def _cfg(rounds=2):
 def _patch(tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "CACHE_PATH", tmp_path / "s.json")
     monkeypatch.setattr(storage, "RESULTS_DIR", tmp_path / "Results")
+    monkeypatch.setattr(logbook, "LOGS_DIR", tmp_path / "Logs")
+    monkeypatch.setattr(logbook, "_operations_path", None)
+    monkeypatch.setattr(logbook, "_api_requests_path", None)
+
+
+def test_llm_config_maps_thinking_params():
+    from app.debate import _llm_config
+    off = _llm_config({"thinking_enabled": False, "reasoning_effort": "max"})
+    assert off.thinking_enabled is False
+    assert off.reasoning_effort == "max"
+    default = _llm_config({})
+    assert default.thinking_enabled is True
+    assert default.reasoning_effort == "high"
+
+
+def test_llm_config_falls_back_on_unknown_effort():
+    from app.debate import _llm_config
+    assert _llm_config({"reasoning_effort": "turbo"}).reasoning_effort == "high"
+    assert _llm_config({"reasoning_effort": ""}).reasoning_effort == "high"
 
 
 def test_full_flow_order_and_cache(tmp_path, monkeypatch):
