@@ -186,6 +186,148 @@ function handleState(s) {
   updateRail();
 }
 
+/* ── Markdown 渲染 ──────────────────────────────────── */
+
+const MD_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (ch) => MD_ESCAPES[ch]);
+}
+
+function inlineMarkdown(raw) {
+  const codes = [];
+  let out = raw.replace(/`([^`]+)`/g, (m, code) => {
+    codes.push(`<code class="md-inline">${escapeHtml(code)}</code>`);
+    return `\u0001${codes.length - 1}\u0001`;
+  });
+  out = escapeHtml(out);
+  out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  out = out.replace(/(^|[^*\w])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  out = out.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+  out = out.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g,
+                    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  return out.replace(/\u0001(\d+)\u0001/g, (m, i) => codes[Number(i)]);
+}
+
+// 渲染模型返回的 Markdown。全程转义 HTML，只生成白名单标签，避免注入。
+function renderMarkdown(source) {
+  const blocks = [];
+  const stash = (code) => {
+    blocks.push(`<pre class="md-code"><code>${escapeHtml(code)}</code></pre>`);
+    return `\u0000${blocks.length - 1}\u0000`;
+  };
+  // 先摘出围栏代码块，避免其中的符号被当成 Markdown 解析
+  let text = source.replace(/```[^\n`]*\n?([\s\S]*?)```/g, (m, code) => stash(code.replace(/\n$/, '')));
+  // 流式输出时可能只有开围栏还没闭合
+  text = text.replace(/```[^\n`]*\n?([\s\S]*)$/, (m, code) => stash(code));
+
+  const out = [];
+  let list = null;
+  let para = [];
+  const flushPara = () => {
+    if (para.length) { out.push(`<p>${para.join('<br>')}</p>`); para = []; }
+  };
+  const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) { flushPara(); closeList(); continue; }
+    if (/^\u0000\d+\u0000$/.test(trimmed)) { flushPara(); closeList(); out.push(trimmed); continue; }
+
+    let m;
+    if ((m = trimmed.match(/^(#{1,6})\s+(.*)$/))) {
+      flushPara(); closeList();
+      const level = Math.min(m[1].length + 2, 6);
+      out.push(`<h${level} class="md-h">${inlineMarkdown(m[2])}</h${level}>`);
+      continue;
+    }
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+      flushPara(); closeList(); out.push('<hr class="md-hr">'); continue;
+    }
+    if ((m = trimmed.match(/^>\s?(.*)$/))) {
+      flushPara(); closeList();
+      out.push(`<blockquote class="md-quote">${inlineMarkdown(m[1])}</blockquote>`);
+      continue;
+    }
+    if ((m = trimmed.match(/^[-*+]\s+(.*)$/))) {
+      flushPara();
+      if (list !== 'ul') { closeList(); out.push('<ul class="md-list">'); list = 'ul'; }
+      out.push(`<li>${inlineMarkdown(m[1])}</li>`);
+      continue;
+    }
+    if ((m = trimmed.match(/^\d+[.)]\s+(.*)$/))) {
+      flushPara();
+      if (list !== 'ol') { closeList(); out.push('<ol class="md-list">'); list = 'ol'; }
+      out.push(`<li>${inlineMarkdown(m[1])}</li>`);
+      continue;
+    }
+    closeList();
+    para.push(inlineMarkdown(trimmed));
+  }
+  flushPara(); closeList();
+  return out.join('').replace(/\u0000(\d+)\u0000/g, (m, i) => blocks[Number(i)]);
+}
+
+// 流式输出时逐字重排 DOM 太浪费，按 70ms 合并一次
+const mdRaw = new WeakMap();
+const mdQueue = new Set();
+let mdTimer = null;
+
+function scheduleMarkdown(node) {
+  mdQueue.add(node);
+  if (mdTimer) return;
+  mdTimer = setTimeout(() => {
+    mdTimer = null;
+    for (const el of mdQueue) el.innerHTML = renderMarkdown(mdRaw.get(el) || '');
+    mdQueue.clear();
+  }, 70);
+}
+
+/* ── 思考计时器 ─────────────────────────────────────── */
+
+const thinkTimers = new Map();   // id -> { startedAt, interval, final }
+
+function paintThinkLabel(id, el, seconds) {
+  const node = el.querySelector('.think-timer');
+  if (!node) return;
+  if (seconds === null) {
+    const state = thinkTimers.get(id);
+    if (!state || state.startedAt === null) return;
+    node.textContent = `Thinking ${((performance.now() - state.startedAt) / 1000).toFixed(1)}s`;
+    node.classList.remove('done');
+    return;
+  }
+  node.textContent = `Thought ${Number(seconds).toFixed(1)}s`;
+  node.classList.add('done');
+}
+
+function thinkStart(id, el) {
+  let state = thinkTimers.get(id);
+  if (!state) { state = { startedAt: null, interval: null, final: null }; thinkTimers.set(id, state); }
+  if (state.startedAt !== null || state.final !== null) return;
+  state.startedAt = performance.now();
+  state.interval = setInterval(() => paintThinkLabel(id, el, null), 100);
+  paintThinkLabel(id, el, null);
+}
+
+function thinkFinish(id, el, seconds) {
+  const state = thinkTimers.get(id);
+  if (!state || state.startedAt === null) return;
+  if (state.interval) { clearInterval(state.interval); state.interval = null; }
+  if (state.final !== null) return;
+  const value = (seconds === null || seconds === undefined)
+    ? (performance.now() - state.startedAt) / 1000
+    : seconds;
+  state.final = value;
+  paintThinkLabel(id, el, value);
+}
+
+function thinkReset(id) {
+  const state = thinkTimers.get(id);
+  if (state?.interval) clearInterval(state.interval);
+  thinkTimers.delete(id);
+}
+
 /* ── 发言气泡 ───────────────────────────────────────── */
 
 function containerFor(entry) {
@@ -200,8 +342,14 @@ function clearLive() {
 function ensureBubble(entry) {
   let el = bubbles.get(entry.id);
   if (el) {
-    el.querySelector('.content').textContent = '';
+    thinkReset(entry.id);
+    const node = el.querySelector('.content');
+    mdRaw.delete(node);
+    node.innerHTML = '';
     el.querySelector('.thinking').textContent = '';
+    const timer = el.querySelector('.think-timer');
+    timer.textContent = '';
+    timer.classList.remove('done');
     el.querySelector('.thinking-toggle').hidden = true;
   } else {
     el = document.createElement('article');
@@ -212,7 +360,9 @@ function ensureBubble(entry) {
         <span class="badge"></span>
         <span class="meta"></span>
       </header>
-      <button class="thinking-toggle" type="button" aria-expanded="false" hidden>思考过程</button>
+      <button class="thinking-toggle" type="button" aria-expanded="false" hidden>
+        <span>思考过程</span><span class="think-timer"></span>
+      </button>
       <div class="thinking" hidden></div>
       <div class="content"></div>`;
     el.querySelector('.badge').textContent = entry.speaker || '评委';
@@ -241,9 +391,14 @@ function appendText(id, kind, text) {
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
     box.textContent += text;
     el.querySelector('.thinking-toggle').hidden = false;
+    thinkStart(id, el);
     if (atBottom) box.scrollTop = box.scrollHeight;
   } else {
-    el.querySelector('.content').textContent += text;
+    // 正文一开始输出，就说明思考阶段结束了
+    thinkFinish(id, el, null);
+    const node = el.querySelector('.content');
+    mdRaw.set(node, (mdRaw.get(node) || '') + text);
+    scheduleMarkdown(node);
   }
   scrollIntoView(el);
 }
@@ -267,6 +422,11 @@ function handleEnd(d) {
   if (!el) return;
   el.classList.remove('live');
   el.querySelector('.meta').textContent = `${d.chars} 字 · ${(d.elapsed_ms / 1000).toFixed(1)}s`;
+  const state = thinkTimers.get(d.id);
+  if (state && state.startedAt !== null) {
+    // 后端给的 thinking_ms 是权威值，用于跨刷新保持一致
+    thinkFinish(d.id, el, d.thinking_ms > 0 ? d.thinking_ms / 1000 : null);
+  }
 }
 
 function handleWarning(d) {
@@ -323,32 +483,38 @@ function connect() {
   es.addEventListener('error', () => $('#hint').textContent = '连接中断，浏览器将自动重连…');
 }
 
+function applyMessage(el, m) {
+  const node = el.querySelector('.content');
+  mdRaw.set(node, m.content || '');
+  node.innerHTML = renderMarkdown(m.content || '');
+  el.querySelector('.thinking').textContent = m.reasoning || '';
+  el.querySelector('.thinking-toggle').hidden = !m.reasoning;
+  if (m.thinking_ms > 0) {
+    thinkTimers.set(m.id, { startedAt: 0, interval: null, final: m.thinking_ms / 1000 });
+    paintThinkLabel(m.id, el, m.thinking_ms / 1000);
+  }
+  if (m.chars !== undefined || m.elapsed_ms !== undefined) {
+    el.querySelector('.meta').textContent =
+      `${m.chars || 0} 字 · ${((m.elapsed_ms || 0) / 1000).toFixed(1)}s`;
+  }
+  el.classList.remove('live');
+}
+
 async function recover() {
   const s = await (await fetch('/api/debate/state')).json();
   if (s.topic) $('#topic-line').textContent = s.topic;
   for (const m of s.messages || []) {
     ensureBubble(m);
-    const el = bubbles.get(m.id);
-    el.querySelector('.content').textContent = m.content;
-    el.querySelector('.thinking').textContent = m.reasoning || '';
-    el.querySelector('.thinking-toggle').hidden = !m.reasoning;
-    el.querySelector('.meta').textContent = `${m.chars} 字 · ${(m.elapsed_ms / 1000).toFixed(1)}s`;
-    el.classList.remove('live');
+    applyMessage(bubbles.get(m.id), m);
   }
   if (s.judge) {
     ensureBubble({ id: 'judge', speaker: '评委', side: null });
-    const el = bubbles.get('judge');
-    el.querySelector('.content').textContent = s.judge.content;
-    el.querySelector('.thinking').textContent = s.judge.reasoning || '';
-    el.querySelector('.thinking-toggle').hidden = !s.judge.reasoning;
-    el.classList.remove('live');
+    applyMessage(bubbles.get('judge'), { id: 'judge', ...s.judge });
   }
   if (s.current) {
     ensureBubble(s.current);
-    const el = bubbles.get(s.current.id);
-    el.querySelector('.content').textContent = s.current.content || '';
-    el.querySelector('.thinking').textContent = s.current.reasoning || '';
-    el.querySelector('.thinking-toggle').hidden = !s.current.reasoning;
+    applyMessage(bubbles.get(s.current.id), s.current);
+    bubbles.get(s.current.id).classList.add('live');
   }
   handleState(s);
 }
