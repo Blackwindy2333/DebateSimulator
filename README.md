@@ -6,7 +6,9 @@
 
 ## 功能
 
-- **三方接口独立配置**：正方、反方、总结评价各用一套 `昵称 / API Key / Base URL / 模型 / 温度 / 最大输出`。
+- **三方接口独立配置**：正方、反方、总结评价各用一套 `昵称 / API Key / Base URL / 模型 / 温度 / 思考模式 / 思考强度`。
+- **思考模式可控**：每份接口可单独开关思考并设定强度，请求体按 `{"thinking": {"type": "enabled"|"disabled"}}`
+  与 `{"reasoning_effort": "low"|"high"|"max"}` 发送（关闭思考时不发送 `reasoning_effort`）。
 - **辩题校验**：开始前调用总结评价接口，依据 [`DebateRequirements.txt`](DebateRequirements.txt)
   判断选题是否合理；不合理时给出简短理由并暂停，可改题或**强行开始**。API 生成的选题自动跳过校验。
 - **选题生成**：一次生成 3~5 个候选辩题并附论证空间说明，点选即用。
@@ -16,8 +18,9 @@
   剥离为独立的可折叠「思考过程」区块，不与正式发言混淆。
 - **实时显示**：SSE 逐字推送；刷新浏览器不中断辩论，重连后自动恢复现场。
 - **过程控制**：暂停 / 继续 / 中止；接口失败自动重试，仍失败则暂停并可选 重试 / 跳过 / 中止。
+- **双日志**：每次运行生成操作日志与 API 请求日志各一份，详见下方「日志」。
 - **持久化**：配置存于 `config/config.json`；结果存为 `Results/Result_<时间>.txt`（另附同名 `.md`）。
-- **其他**：双方自定义辩论风格、发言计时与字数、深/浅主题、结束提示音、历史辩论回放。
+- **其他**：双方自定义辩论风格、发言计时与字数、深/浅主题（默认浅色）、结束提示音、历史辩论回放。
 
 ## 快速开始
 
@@ -38,7 +41,9 @@ python -m app
 
 | 项目 | 说明 |
 | --- | --- |
-| 正方 / 反方 / 总结评价 接口 | 昵称、API Key、Base URL、模型名 |
+| 正方 / 反方 / 总结评价 接口 | 昵称、API Key、Base URL、模型名、温度 |
+| 思考模式 | 每份接口可单独开关；开启时才附带思考强度 |
+| 思考强度 | `low` / `high` / `max`，仅开启思考模式时生效 |
 | 辩题 | 直接填写，或点「生成候选选题」挑选 |
 | 自由辩论轮数 | 设为 N 时，正反双方在自由辩论阶段各有 N 次发言 |
 
@@ -50,18 +55,51 @@ python -m app
 app/
   main.py          FastAPI 入口：REST + SSE
   debate.py        辩论状态机（编排 / 控制 / 重试）
-  llm.py           OpenAI 兼容流式客户端与思考内容剥离
+  llm.py           OpenAI 兼容流式客户端、请求体构造与思考内容剥离
   prompts.py       提示词加载与消息组装
   config_store.py  config/config.json 读写
   storage.py       缓存管理与结果落盘
   events.py        SSE 事件广播器
+  logbook.py       双日志（操作日志 + API 请求日志）
 prompts/           context / opening / free_debate / closing / topic_check / topic_gen / judge
 web/               index.html · styles.css · app.js
 config/config.json 持久化配置（API Key 明文存储于本机，界面仅显示打码值）
 cache/session.json 运行时缓存（进程启动时清空）
 Results/           结果输出
+Logs/              操作日志与 API 请求日志
 tests/             pytest 单元测试与假接口
 ```
+
+## 请求体
+
+每次调用都按以下结构发送（`stream` 恒为 `true`，以支持逐字实时显示）：
+
+```json
+{
+  "model": "deepseek-flash",
+  "messages": [
+    {"role": "system", "content": "……当前局面介绍……"},
+    {"role": "user", "content": "……阶段指令 与 此前发言记录……"}
+  ],
+  "stream": true,
+  "temperature": 0.8,
+  "thinking": {"type": "enabled"},
+  "reasoning_effort": "high"
+}
+```
+
+关闭思考模式时 `thinking.type` 为 `"disabled"`，且不再发送 `reasoning_effort`。
+
+## 日志
+
+每次启动应用都会在 `Logs/` 下新建一对日志文件，历史日志不会被覆盖：
+
+| 文件 | 内容 |
+| --- | --- |
+| `Operations_<时间>.log` | 一切发生的操作与更改：配置保存、辩题校验结果、阶段推进、控制指令、重试与失败、结果落盘等 |
+| `ApiRequests_<时间>.log` | 每一次 API 请求的**完整请求体**（model / messages / thinking / reasoning_effort / stream / temperature） |
+
+界面右上角 **历史** 抽屉底部会显示当前两个日志文件的实际路径。
 
 ## 结果文件格式
 
