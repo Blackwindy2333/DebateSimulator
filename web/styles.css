@@ -951,7 +951,7 @@ html[data-theme='light'] .controls {
 }
 
 .drawer[hidden] {
-  display: flex !important;
+  display: none;
 }
 
 .drawer-head {
