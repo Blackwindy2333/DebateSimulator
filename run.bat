@@ -25,11 +25,9 @@ echo %PORT_CAND%|findstr /r "^[0-9][0-9]*$" >nul && set "PORT=%PORT_CAND%"
 :port_ready
 echo [1/4] 检查端口 %PORT% 是否已被占用
 set "OLD_PIDS="
-for /f "tokens=5" %%p in ('netstat -ano ^| findstr /c:"LISTENING" ^| findstr /c:":%PORT% "') do (
-    if not defined SEEN_%%p (
-        set "SEEN_%%p=1"
-        set "OLD_PIDS=!OLD_PIDS! %%p"
-    )
+rem 用 PowerShell 取监听进程，避免 netstat 文本分列在中文系统上不稳定
+for /f "usebackq delims=" %%p in (`powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort %PORT% -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess | Sort-Object -Unique"`) do (
+    set "OLD_PIDS=!OLD_PIDS! %%p"
 )
 
 if not defined OLD_PIDS (
@@ -38,7 +36,9 @@ if not defined OLD_PIDS (
 )
 
 for %%p in (!OLD_PIDS!) do (
-    echo        端口 %PORT% 已被进程 %%p 占用，正在关闭...
+    set "PNAME="
+    for /f "usebackq tokens=1" %%n in (`tasklist /FI "PID eq %%p" /FO CSV /NH 2^>nul`) do set "PNAME=%%~n"
+    echo        端口 %PORT% 已被进程 %%p [!PNAME!] 占用，正在关闭...
     taskkill /F /PID %%p >nul 2>nul
     if errorlevel 1 (
         echo        [警告] 结束进程 %%p 失败，可能需要管理员权限。
@@ -50,11 +50,11 @@ rem 等端口真正释放（timeout 在输入被重定向时会报错，故用 ping 代替）
 ping -n 2 127.0.0.1 >nul
 
 set "STILL="
-for /f "tokens=5" %%p in ('netstat -ano ^| findstr /c:"LISTENING" ^| findstr /c:":%PORT% "') do set "STILL=%%p"
+for /f "usebackq delims=" %%p in (`powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort %PORT% -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess"`) do set "STILL=%%p"
 if defined STILL (
     echo.
     echo [错误] 端口 %PORT% 仍被进程 !STILL! 占用。
-    echo        请手动关闭后再运行本脚本。
+    echo        请手动关闭后再运行本脚本，或在 config/config.json 中修改 runtime.port。
     goto :end
 )
 echo        端口已释放，继续。
