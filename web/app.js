@@ -174,6 +174,10 @@ function updateRail() {
   $('#rail-meta').textContent = `共 ${rounds} 轮`;
 }
 
+function reducedMotion() {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 function handleState(s) {
   const pill = $('#status-pill');
   pill.dataset.status = s.status;
@@ -612,15 +616,44 @@ async function generateTopics() {
 
 /* ── 抽屉 ───────────────────────────────────────────── */
 
+const DRAWER_MS = 360;
+
+function hideDrawer(el) {
+  if (!el || (el.hidden && !el.classList.contains('is-open'))) return;
+  el.classList.remove('is-open');
+  const finish = () => {
+    if (!el.classList.contains('is-open')) el.hidden = true;
+  };
+  window.setTimeout(finish, reducedMotion() ? 0 : DRAWER_MS);
+}
+
 function openDrawer(id) {
-  $$('.drawer').forEach((d) => { d.hidden = true; });
-  $('#' + id).hidden = false;
-  $('#scrim').hidden = false;
+  const target = $('#' + id);
+  if (!target) return;
+  $$('.drawer').forEach((d) => { if (d !== target) hideDrawer(d); });
+  const scrim = $('#scrim');
+  scrim.hidden = false;
+  target.hidden = false;
+  // 从当前呈现值继续，避免二次打开跳变
+  requestAnimationFrame(() => {
+    scrim.classList.add('is-open');
+    requestAnimationFrame(() => {
+      target.classList.add('is-open');
+      const focusable = target.querySelector(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])'
+      );
+      if (focusable) focusable.focus({ preventScroll: true });
+    });
+  });
 }
 
 function closeDrawers() {
-  $$('.drawer').forEach((d) => { d.hidden = true; });
-  $('#scrim').hidden = true;
+  $$('.drawer').forEach((d) => hideDrawer(d));
+  const scrim = $('#scrim');
+  scrim.classList.remove('is-open');
+  window.setTimeout(() => {
+    if (!scrim.classList.contains('is-open')) scrim.hidden = true;
+  }, reducedMotion() ? 0 : 240);
 }
 
 async function openHistory() {

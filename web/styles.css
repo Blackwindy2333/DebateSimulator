@@ -118,6 +118,25 @@ button {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* 主题切换时色彩平滑过渡 */
+html {
+  transition: background-color var(--dur) var(--ease-out);
+}
+
+body,
+.strip,
+.controls,
+.drawer,
+.bubble,
+.verdict,
+.banner-body,
+.api-card {
+  transition:
+    background-color var(--dur) var(--ease-out),
+    border-color var(--dur) var(--ease-out),
+    color var(--dur) var(--ease-out);
+}
+
 :where(button, input, textarea, select, a):focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
