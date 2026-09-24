@@ -2,18 +2,20 @@
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 title DebateSimulator
-chcp 65001 >nul
+rem Åú´¦ÀíÎÄ¼þÊ¹ÓÃÏµÍ³ ANSI (GBK) ±àÂë±£´æ£¬ÖÐÎÄ Windows ÏÂ cmd ²ÅÄÜÕýÈ·½âÎö
+chcp 936 >nul 2>nul
 set PYTHONUTF8=1
+set PYTHONIOENCODING=utf-8
 
 echo ==========================================
-echo    AI è¾©è®ºæ¨¡æ‹Ÿå™¨  DebateSimulator
+echo    AI ±çÂÛÄ£ÄâÆ÷  DebateSimulator
 echo ==========================================
 echo.
 
 set "VENV_DIR=%~dp0.venv"
 set "VENV_PY=%VENV_DIR%\Scripts\python.exe"
 
-rem â”€â”€ ç«¯å£ï¼šä»Ž config/config.json çš„ runtime.port è¯»å–ï¼›è¯»ä¸åˆ°æˆ–éžæ•°å­—åˆ™é€€å›ž 8000 â”€â”€
+rem ¶Ë¿Ú£º´Ó config/config.json µÄ runtime.port ¶ÁÈ¡£»¶Á²»µ½»ò·ÇÊý×ÖÔòÍË»Ø 8000
 set "PORT=8000"
 if not exist "config\config.json" goto :port_ready
 set "PORT_CAND="
@@ -21,34 +23,46 @@ for /f "usebackq delims=" %%a in (`powershell -NoProfile -Command "try{$j=Conver
 echo %PORT_CAND%|findstr /r "^[0-9][0-9]*$" >nul && set "PORT=%PORT_CAND%"
 
 :port_ready
-echo [1/4] æ£€æŸ¥ç«¯å£ %PORT% æ˜¯å¦å·²è¢«å ç”¨
+echo [1/4] ¼ì²é¶Ë¿Ú %PORT% ÊÇ·ñÒÑ±»Õ¼ÓÃ
 set "OLD_PIDS="
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr /c:"LISTENING" ^| findstr /c:":%PORT% "') do (
-    set "OLD_PIDS=!OLD_PIDS! %%p"
+    if not defined SEEN_%%p (
+        set "SEEN_%%p=1"
+        set "OLD_PIDS=!OLD_PIDS! %%p"
+    )
 )
 
 if not defined OLD_PIDS (
-    echo        ç«¯å£ç©ºé—²ï¼Œç»§ç»­ã€‚
+    echo        ¶Ë¿Ú¿ÕÏÐ£¬¼ÌÐø¡£
     goto :setup
 )
 
 for %%p in (!OLD_PIDS!) do (
-    echo        ç«¯å£ %PORT% å·²è¢«è¿›ç¨‹ %%p å ç”¨ï¼Œæ­£åœ¨å…³é—­...
+    echo        ¶Ë¿Ú %PORT% ÒÑ±»½ø³Ì %%p Õ¼ÓÃ£¬ÕýÔÚ¹Ø±Õ...
     taskkill /F /PID %%p >nul 2>nul
     if errorlevel 1 (
-        echo        [è­¦å‘Š] ç»“æŸè¿›ç¨‹ %%p å¤±è´¥ï¼Œå¯èƒ½éœ€è¦ç®¡ç†å‘˜æƒé™ã€‚
-        echo               è¯·æ‰‹åŠ¨å…³é—­åŽå†è¿è¡Œæœ¬è„šæœ¬ã€‚
+        echo        [¾¯¸æ] ½áÊø½ø³Ì %%p Ê§°Ü£¬¿ÉÄÜÐèÒª¹ÜÀíÔ±È¨ÏÞ¡£
     ) else (
-        echo        å·²å…³é—­è¿›ç¨‹ %%pã€‚
+        echo        ÒÑ¹Ø±Õ½ø³Ì %%p¡£
     )
 )
-rem ç­‰ç«¯å£çœŸæ­£é‡Šæ”¾ï¼ˆtimeout åœ¨è¾“å…¥è¢«é‡å®šå‘æ—¶ä¼šæŠ¥é”™ï¼Œæ•…ç”¨ ping ä»£æ›¿ï¼‰
+rem µÈ¶Ë¿ÚÕæÕýÊÍ·Å£¨timeout ÔÚÊäÈë±»ÖØ¶¨ÏòÊ±»á±¨´í£¬¹ÊÓÃ ping ´úÌæ£©
 ping -n 2 127.0.0.1 >nul
+
+set "STILL="
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr /c:"LISTENING" ^| findstr /c:":%PORT% "') do set "STILL=%%p"
+if defined STILL (
+    echo.
+    echo [´íÎó] ¶Ë¿Ú %PORT% ÈÔ±»½ø³Ì !STILL! Õ¼ÓÃ¡£
+    echo        ÇëÊÖ¶¯¹Ø±ÕºóÔÙÔËÐÐ±¾½Å±¾¡£
+    goto :end
+)
+echo        ¶Ë¿ÚÒÑÊÍ·Å£¬¼ÌÐø¡£
 
 :setup
 if exist "%VENV_PY%" goto :deps
 
-echo [2/4] åˆ›å»ºè™šæ‹ŸçŽ¯å¢ƒ .venv
+echo [2/4] ´´½¨ÐéÄâ»·¾³ .venv
 
 set "PY_BOOT="
 where python >nul 2>nul
@@ -62,44 +76,55 @@ if errorlevel 1 goto :no_py
 set "PY_BOOT=py"
 
 :got_py
-echo        ä½¿ç”¨ %PY_BOOT%
+echo        Ê¹ÓÃ %PY_BOOT%
 "%PY_BOOT%" -m venv "%VENV_DIR%"
 if errorlevel 1 goto :venv_fail
 if not exist "%VENV_PY%" goto :venv_fail
 
 :deps
-echo [3/4] æ£€æŸ¥å¹¶å®‰è£…ä¾èµ–
+echo [3/4] ¼ì²é²¢°²×°ÒÀÀµ
+"%VENV_PY%" -m pip --version >nul 2>nul
+if errorlevel 1 (
+    echo        ¼ì²âµ½ÐéÄâ»·¾³È±ÉÙ pip£¬ÕýÔÚÐÞ¸´...
+    "%VENV_PY%" -m ensurepip --upgrade >nul 2>nul
+    "%VENV_PY%" -m pip --version >nul 2>nul
+    if errorlevel 1 (
+        echo        ensurepip ÎÞ·¨ÐÞ¸´£¬ÖØ½¨ÐéÄâ»·¾³...
+        rmdir /s /q "%VENV_DIR%" >nul 2>nul
+        goto :setup
+    )
+)
 "%VENV_PY%" -m pip install -q --disable-pip-version-check -r requirements.txt
 if errorlevel 1 goto :pip_fail
 
-echo [4/4] å¯åŠ¨æœåŠ¡
-echo        æµè§ˆå™¨ä¼šåœ¨ä¸€ä¸¤ç§’åŽè‡ªåŠ¨æ‰“å¼€ï¼›åœ¨æ­¤çª—å£æŒ‰ Ctrl+C å¯åœæ­¢æœåŠ¡ã€‚
+echo [4/4] Æô¶¯·þÎñ
+echo        ä¯ÀÀÆ÷»áÔÚÒ»Á½Ãëºó×Ô¶¯´ò¿ª£»ÔÚ´Ë´°¿Ú°´ Ctrl+C ¿ÉÍ£Ö¹·þÎñ¡£
 echo.
 "%VENV_PY%" -u -m app
 echo.
-echo æœåŠ¡å·²åœæ­¢ã€‚
+echo ·þÎñÒÑÍ£Ö¹¡£
 goto :end
 
 :no_py
 echo.
-echo [é”™è¯¯] æœªæ‰¾åˆ° Pythonã€‚
-echo        è¯·å®‰è£… Python 3.10 æˆ–æ›´é«˜ç‰ˆæœ¬ï¼Œå®‰è£…æ—¶åŠ¡å¿…å‹¾é€‰ "Add Python to PATH"ã€‚
-echo        ä¸‹è½½åœ°å€ï¼šhttps://www.python.org/downloads/
+echo [´íÎó] Î´ÕÒµ½ Python¡£
+echo        Çë°²×° Python 3.10 »ò¸ü¸ß°æ±¾£¬°²×°Ê±Îñ±Ø¹´Ñ¡ Add Python to PATH¡£
+echo        ÏÂÔØµØÖ·£ºhttps://www.python.org/downloads/
 goto :end
 
 :venv_fail
 echo.
-echo [é”™è¯¯] åˆ›å»ºè™šæ‹ŸçŽ¯å¢ƒå¤±è´¥ã€‚
-echo        è¯·ç¡®è®¤ç£ç›˜å¯å†™ï¼Œä¸” Python å®‰è£…å®Œæ•´ã€‚
+echo [´íÎó] ´´½¨ÐéÄâ»·¾³Ê§°Ü¡£
+echo        ÇëÈ·ÈÏ´ÅÅÌ¿ÉÐ´£¬ÇÒ Python °²×°ÍêÕû¡£
 goto :end
 
 :pip_fail
 echo.
-echo [é”™è¯¯] ä¾èµ–å®‰è£…å¤±è´¥ã€‚
-echo        è¯·æ£€æŸ¥ç½‘ç»œè¿žæŽ¥åŽé‡æ–°è¿è¡Œæœ¬è„šæœ¬ã€‚
+echo [´íÎó] ÒÀÀµ°²×°Ê§°Ü¡£
+echo        Çë¼ì²éÍøÂçÁ¬½ÓºóÖØÐÂÔËÐÐ±¾½Å±¾¡£
 goto :end
 
 :end
 echo.
-echo æŒ‰ä»»æ„é”®å…³é—­æ­¤çª—å£...
+echo °´ÈÎÒâ¼ü¹Ø±Õ´Ë´°¿Ú...
 pause >nul
