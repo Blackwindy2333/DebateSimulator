@@ -24,12 +24,16 @@ def _llm_config(api):
 
 
 def _thinking_ms(timing):
-    """思考阶段耗时：首个思考增量 → 首个正文增量（期间未产生正文则算到此刻）。"""
+    """思考阶段耗时：首个思考增量 → 首个正文增量（期间未产生正文则算到此刻）。
+
+    只要发生过思考，至少记 1ms：两端增量可能在同一毫秒内到达（缓冲/突发推送），
+    舍入成 0 会让界面显示 Thought 0.0s 且断言失真。
+    """
     start = timing["reasoning_at"]
     if start is None:
         return 0
     end = timing["content_at"] if timing["content_at"] is not None else time.monotonic()
-    return int(round((end - start) * 1000))
+    return max(1, int(round((end - start) * 1000)))
 
 
 class DebateRunner:
@@ -151,8 +155,11 @@ class DebateRunner:
                     attempt = 0
                     continue
                 if decision == "skip":
+                    # 跳过也要把占位说明推给前端，否则气泡正文会一直空着
+                    if on_content:
+                        await on_content(SKIP_NOTICE)
                     return {"content": SKIP_NOTICE, "reasoning": "", "elapsed_ms": 0,
-                            "chars": 0, "thinking_ms": 0}
+                            "chars": len(SKIP_NOTICE), "thinking_ms": 0}
                 raise AbortError()
 
     async def _say(self, side, role, round_no=None):
@@ -223,7 +230,7 @@ class DebateRunner:
         self.storage.set_judge(self.session, judge)
         logbook.operation("debate.judge", f"{judge['chars']} 字 | {judge['elapsed_ms']} ms | "
                                            f"思考 {judge['thinking_ms']} ms")
-        await self.bus.publish("judge_end", {"elapsed_ms": judge["elapsed_ms"],
+        await self.bus.publish("judge_end", {"id": "judge", "elapsed_ms": judge["elapsed_ms"],
                                              "chars": judge["chars"],
                                              "thinking_ms": judge["thinking_ms"]})
 
@@ -259,3 +266,9 @@ class DebateRunner:
             self.storage.save_session(self.session)
             logbook.operation("debate.aborted", "辩论被中止")
             await self._set_status("ABORTED", "aborted")
+        except Exception as exc:  # 未预期异常也要落状态，避免卡在进行中
+            self.storage.save_session(self.session)
+            logbook.operation("debate.error", f"{type(exc).__name__}: {exc}")
+            await self._set_status("ABORTED", "aborted")
+            await self.bus.publish("error", {"stage": self.stage, "message": str(exc),
+                                             "retries": 0})

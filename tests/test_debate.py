@@ -48,6 +48,8 @@ def _patch(tmp_path, monkeypatch):
 def test_thinking_ms_measures_reasoning_window():
     assert debate_mod._thinking_ms({"reasoning_at": None, "content_at": None}) == 0
     assert debate_mod._thinking_ms({"reasoning_at": 1.0, "content_at": 3.5}) == 2500
+    # 同一时刻到达的思考/正文：有思考则至少 1ms，避免显示 0.0s
+    assert debate_mod._thinking_ms({"reasoning_at": 1.0, "content_at": 1.0}) == 1
     # 只有思考、还没出正文时算到当前时刻
     assert debate_mod._thinking_ms({"reasoning_at": time.monotonic() - 0.2,
                                     "content_at": None}) >= 190
@@ -136,3 +138,58 @@ def test_abort_stops_debate(tmp_path, monkeypatch):
     asyncio.run(drive())
     assert runner.status == "ABORTED"
     assert len(runner.session["messages"]) < 8
+
+
+def test_skip_streams_notice_to_frontend(tmp_path, monkeypatch):
+    _patch(tmp_path, monkeypatch)
+    published = []
+
+    class AlwaysFailLLM:
+        async def __call__(self, cfg, messages, *, timeout=120.0, on_reasoning=None,
+                           on_content=None, logger=None):
+            raise debate_mod.LLMError("boom")
+
+    bus = EventBus()
+    orig_publish = bus.publish
+
+    async def spy(event, data):
+        published.append((event, data))
+        await orig_publish(event, data)
+
+    bus.publish = spy
+    runner = debate_mod.DebateRunner(_cfg(rounds=1), bus, llm=AlwaysFailLLM())
+    runner.config["runtime"]["max_retries"] = 0
+
+    async def drive():
+        task = asyncio.create_task(runner.start(force=True))
+        await asyncio.sleep(0.05)
+        assert runner.status == "PAUSED"
+        runner.control("skip")
+        await asyncio.sleep(0.05)
+        # 第一条发言已落库，再中止避免继续重试
+        runner.control("abort")
+        await task
+
+    asyncio.run(drive())
+    contents = [d.get("text") for e, d in published if e == "content_delta"]
+    assert any(debate_mod.SKIP_NOTICE in (t or "") for t in contents)
+    assert runner.session["messages"][0]["content"] == debate_mod.SKIP_NOTICE
+    assert runner.session["messages"][0]["chars"] == len(debate_mod.SKIP_NOTICE)
+
+
+def test_judge_end_includes_id(tmp_path, monkeypatch):
+    _patch(tmp_path, monkeypatch)
+    published = []
+
+    bus = EventBus()
+    orig_publish = bus.publish
+
+    async def spy(event, data):
+        published.append((event, data))
+        await orig_publish(event, data)
+
+    bus.publish = spy
+    runner = debate_mod.DebateRunner(_cfg(rounds=1), bus, llm=FakeLLM())
+    asyncio.run(runner.start(force=True))
+    judge_events = [d for e, d in published if e == "judge_end"]
+    assert judge_events and judge_events[-1].get("id") == "judge"
