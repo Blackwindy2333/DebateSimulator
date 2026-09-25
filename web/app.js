@@ -301,7 +301,7 @@ function paintThinkLabel(id, el, seconds) {
     node.classList.remove('done');
     return;
   }
-  node.textContent = `Thought ${Number(seconds).toFixed(1)}s`;
+  node.textContent = `Thought ${Math.max(Number(seconds) || 0, 0.1).toFixed(1)}s`;
   node.classList.add('done');
 }
 
@@ -512,7 +512,7 @@ async function recover() {
     applyMessage(bubbles.get(m.id), m);
   }
   if (s.judge) {
-    ensureBubble({ id: 'judge', speaker: '评委', side: null });
+    ensureBubble({ id: 'judge', speaker: '总结评价', side: null });
     applyMessage(bubbles.get('judge'), { id: 'judge', ...s.judge });
   }
   if (s.current) {
