@@ -101,6 +101,14 @@ def create_app():
 
     @app.post("/api/debate/start")
     async def start(payload: dict = Body(default={})):
+        prev_task = state.get("task")
+        prev_runner = state.get("runner")
+        if prev_task and not prev_task.done() and prev_runner is not None:
+            if prev_runner.status in (
+                "VALIDATING", "OPENING", "FREE", "CLOSING", "JUDGING", "WARNING", "PAUSED"
+            ):
+                logbook.operation("api.debate.start.rejected", f"status={prev_runner.status}")
+                return {"ok": False, "error": "已有辩论在进行中，请先等待结束或中止"}
         cfg = config_store.load_config()
         if payload.get("topic"):
             cfg["debate"]["topic"] = payload["topic"]
